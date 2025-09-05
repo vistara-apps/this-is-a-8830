@@ -78,11 +78,6 @@ function appReducer(state, action) {
         ...state,
         selectedScript: action.payload
       }
-    case 'ADD_SCRIPT':
-      return {
-        ...state,
-        scripts: [...state.scripts, action.payload]
-      }
     case 'UPDATE_USER_SUBSCRIPTION':
       return {
         ...state,

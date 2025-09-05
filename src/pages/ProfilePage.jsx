@@ -166,6 +166,7 @@ function ProfilePage() {
                   </ActionButton>
                 </div>
               </div>
+            </div>
           </div>
         ) : (
           <div className="space-y-4">

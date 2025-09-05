@@ -1,6 +1,6 @@
 import React from 'react'
 import { clsx } from 'clsx'
-import { ChevronRight, Bookmark, BookmarkCheck } from 'lucide-react'
+import { ChevronRight, Bookmark, Check } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import ActionButton from './ActionButton'
 
@@ -54,7 +54,7 @@ function ScriptCard({ script, variant = 'default', onSelect }) {
             )}
           >
             {isSaved ? (
-              <BookmarkCheck className="w-4 h-4" />
+              <Check className="w-4 h-4" />
             ) : (
               <Bookmark className="w-4 h-4" />
             )}
