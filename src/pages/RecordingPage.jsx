@@ -1,7 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { Mic, Square, Play, Pause, Download, Share, Clock } from 'lucide-react'
+import { Mic, Square, Play, Pause, Download, Share, Clock, Upload, Save } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import ActionButton from '../components/ActionButton'
+import storageService from '../services/storage'
+import openaiService from '../services/openai'
 
 function RecordingPage() {
   const { state, dispatch } = useApp()
@@ -10,9 +12,14 @@ function RecordingPage() {
   const [isPlaying, setIsPlaying] = useState(false)
   const [recordingTime, setRecordingTime] = useState(0)
   const [notes, setNotes] = useState('')
+  const [isUploading, setIsUploading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(0)
+  const [summary, setSummary] = useState('')
+  const [isGeneratingSummary, setIsGeneratingSummary] = useState(false)
   
   const audioRef = useRef(null)
   const intervalRef = useRef(null)
+  const audioChunksRef = useRef([])
 
   // Timer effect
   useEffect(() => {
@@ -37,18 +44,31 @@ function RecordingPage() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       const recorder = new MediaRecorder(stream)
-      const chunks = []
+      audioChunksRef.current = []
 
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) {
-          chunks.push(e.data)
+          audioChunksRef.current.push(e.data)
         }
       }
 
-      recorder.onstop = () => {
-        const blob = new Blob(chunks, { type: 'audio/webm' })
+      recorder.onstop = async () => {
+        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
         const url = URL.createObjectURL(blob)
         setAudioUrl(url)
+        
+        // Try to upload to cloud storage
+        if (state.user.subscriptionStatus === 'premium') {
+          try {
+            await uploadToCloud(blob)
+          } catch (error) {
+            console.error('Cloud upload failed, saving locally:', error)
+            await saveLocally(blob)
+          }
+        } else {
+          // Free users save locally
+          await saveLocally(blob)
+        }
         
         // Stop all tracks to turn off recording indicator
         stream.getTracks().forEach(track => track.stop())
@@ -69,6 +89,108 @@ function RecordingPage() {
       mediaRecorder.stop()
       setMediaRecorder(null)
       dispatch({ type: 'STOP_RECORDING' })
+    }
+  }
+
+  // Cloud storage functions
+  const uploadToCloud = async (audioBlob) => {
+    if (!state.currentRecording) return
+
+    setIsUploading(true)
+    setUploadProgress(0)
+
+    try {
+      const metadata = {
+        duration: recordingTime,
+        scenario: state.selectedScript?.scenario || 'General',
+        notes: notes
+      }
+
+      const result = await storageService.uploadAudio(
+        audioBlob, 
+        state.currentRecording.interactionId, 
+        metadata
+      )
+
+      // Update recording with cloud URL
+      dispatch({
+        type: 'UPDATE_RECORDING_NOTES',
+        payload: { audioRecordingUrl: result.url }
+      })
+
+      setUploadProgress(100)
+    } catch (error) {
+      console.error('Upload failed:', error)
+      throw error
+    } finally {
+      setIsUploading(false)
+    }
+  }
+
+  const saveLocally = async (audioBlob) => {
+    if (!state.currentRecording) return
+
+    try {
+      await storageService.saveToLocalStorage(audioBlob, state.currentRecording.interactionId)
+      
+      // Update recording with local reference
+      dispatch({
+        type: 'UPDATE_RECORDING_NOTES',
+        payload: { audioRecordingUrl: `local:${state.currentRecording.interactionId}` }
+      })
+    } catch (error) {
+      console.error('Local save failed:', error)
+    }
+  }
+
+  const generateSummary = async () => {
+    if (!state.currentRecording) return
+
+    setIsGeneratingSummary(true)
+
+    try {
+      const interactionData = {
+        scenario: state.selectedScript?.scenario || 'General Interaction',
+        duration: formatTime(recordingTime),
+        notes: notes,
+        timestamp: state.currentRecording.startTime
+      }
+
+      const generatedSummary = await openaiService.generateInteractionSummary(interactionData)
+      setSummary(generatedSummary)
+    } catch (error) {
+      console.error('Summary generation failed:', error)
+      setSummary('Unable to generate summary. Please try again.')
+    } finally {
+      setIsGeneratingSummary(false)
+    }
+  }
+
+  const shareSummary = async () => {
+    if (!summary) {
+      await generateSummary()
+    }
+
+    const shareData = {
+      title: 'Police Interaction Summary',
+      text: summary,
+      url: window.location.href
+    }
+
+    if (navigator.share) {
+      try {
+        await navigator.share(shareData)
+      } catch (error) {
+        console.log('Share cancelled or failed:', error)
+      }
+    } else {
+      // Fallback: copy to clipboard
+      try {
+        await navigator.clipboard.writeText(summary)
+        alert('Summary copied to clipboard!')
+      } catch (error) {
+        console.error('Copy failed:', error)
+      }
     }
   }
 
@@ -95,41 +217,15 @@ function RecordingPage() {
     return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`
   }
 
-  const generateSummary = () => {
-    const summary = {
-      title: 'Interaction Summary',
-      body: (
-        <div className="space-y-4">
-          <div>
-            <h3 className="font-medium text-text mb-2">Recording Details</h3>
-            <div className="text-sm text-muted space-y-1">
-              <p>Duration: {formatTime(recordingTime)}</p>
-              <p>Started: {state.currentRecording?.startTime || new Date().toLocaleString()}</p>
-              <p>Status: {state.isRecording ? 'Recording' : 'Completed'}</p>
-            </div>
-          </div>
-          
-          {notes && (
-            <div>
-              <h3 className="font-medium text-text mb-2">Notes</h3>
-              <p className="text-sm text-muted">{notes}</p>
-            </div>
-          )}
-          
-          <div className="flex space-x-2">
-            <ActionButton variant="primary" size="sm" className="flex-1">
-              <Share className="w-4 h-4 mr-2" />
-              Share Summary
-            </ActionButton>
-            <ActionButton variant="secondary" size="sm">
-              <Download className="w-4 h-4 mr-2" />
-              Export
-            </ActionButton>
-          </div>
-        </div>
-      )
+  const downloadRecording = () => {
+    if (audioUrl) {
+      const a = document.createElement('a')
+      a.href = audioUrl
+      a.download = `recording_${state.currentRecording?.interactionId || Date.now()}.webm`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
     }
-    return summary
   }
 
   return (
@@ -210,6 +306,78 @@ function RecordingPage() {
             onEnded={() => setIsPlaying(false)}
             className="hidden"
           />
+
+          {/* Upload Status */}
+          {isUploading && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted">Uploading to cloud...</span>
+                <span className="text-primary">{uploadProgress}%</span>
+              </div>
+              <div className="w-full bg-gray-200 rounded-full h-2">
+                <div 
+                  className="bg-primary h-2 rounded-full transition-all duration-300"
+                  style={{ width: `${uploadProgress}%` }}
+                ></div>
+              </div>
+            </div>
+          )}
+
+          {/* Action Buttons */}
+          <div className="flex space-x-2">
+            <ActionButton 
+              variant="secondary" 
+              size="sm" 
+              onClick={downloadRecording}
+              className="flex-1"
+            >
+              <Download className="w-4 h-4 mr-2" />
+              Download
+            </ActionButton>
+            
+            {state.user.subscriptionStatus === 'premium' && (
+              <ActionButton 
+                variant="primary" 
+                size="sm" 
+                onClick={generateSummary}
+                disabled={isGeneratingSummary}
+                className="flex-1"
+              >
+                {isGeneratingSummary ? (
+                  <>
+                    <div className="w-4 h-4 mr-2 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                    Generating...
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-4 h-4 mr-2" />
+                    Generate Summary
+                  </>
+                )}
+              </ActionButton>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* AI-Generated Summary */}
+      {summary && (
+        <div className="bg-surface rounded-lg p-6 shadow-card space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="font-bold text-text">Interaction Summary</h3>
+            <ActionButton 
+              variant="secondary" 
+              size="sm" 
+              onClick={shareSummary}
+            >
+              <Share className="w-4 h-4 mr-2" />
+              Share
+            </ActionButton>
+          </div>
+          
+          <div className="prose prose-sm max-w-none">
+            <p className="text-text whitespace-pre-wrap">{summary}</p>
+          </div>
         </div>
       )}
 

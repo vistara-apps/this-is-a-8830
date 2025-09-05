@@ -1,13 +1,19 @@
 import React, { useState } from 'react'
-import { Search, Filter, Plus } from 'lucide-react'
+import { Search, Filter, Plus, Sparkles, Globe, FileText } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import ScriptCard from '../components/ScriptCard'
 import ActionButton from '../components/ActionButton'
+import openaiService from '../services/openai'
 
 function ScriptsPage() {
-  const { state } = useApp()
+  const { state, dispatch } = useApp()
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('all')
+  const [showCustomGenerator, setShowCustomGenerator] = useState(false)
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [customScenario, setCustomScenario] = useState('')
+  const [selectedState, setSelectedState] = useState(state.user.currentState)
+  const [selectedTone, setSelectedTone] = useState('respectful')
 
   const categories = [
     { id: 'all', label: 'All Scripts' },
@@ -25,15 +31,72 @@ function ScriptsPage() {
     return matchesSearch && matchesCategory
   })
 
+  const generateCustomScript = async () => {
+    if (!customScenario.trim()) return
+
+    setIsGenerating(true)
+
+    try {
+      const customization = {
+        tone: selectedTone,
+        language: 'en'
+      }
+
+      const generatedScript = await openaiService.generateScript(
+        customScenario,
+        selectedState,
+        customization
+      )
+
+      // Create new script object
+      const newScript = {
+        scriptId: Date.now().toString(),
+        state: selectedState,
+        scenario: customScenario,
+        scriptText: generatedScript.script,
+        language: 'en',
+        isCustom: true,
+        keyPoints: generatedScript.keyPoints,
+        avoidSaying: generatedScript.avoidSaying,
+        stateSpecific: generatedScript.stateSpecific
+      }
+
+      // Add to scripts
+      dispatch({ type: 'ADD_SCRIPT', payload: newScript })
+
+      // Reset form
+      setCustomScenario('')
+      setShowCustomGenerator(false)
+    } catch (error) {
+      console.error('Script generation failed:', error)
+      alert('Failed to generate script. Please try again.')
+    } finally {
+      setIsGenerating(false)
+    }
+  }
+
+  const stateOptions = [
+    'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
+    'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD',
+    'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ',
+    'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC',
+    'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY'
+  ]
+
   return (
     <div className="container py-6 space-y-6">
       {/* Header */}
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold text-text">Legal Scripts</h1>
-          <ActionButton variant="primary" size="sm">
-            <Plus className="w-4 h-4 mr-2" />
-            Generate
+          <ActionButton 
+            variant="primary" 
+            size="sm"
+            onClick={() => setShowCustomGenerator(true)}
+            disabled={state.user.subscriptionStatus === 'free'}
+          >
+            <Sparkles className="w-4 h-4 mr-2" />
+            {state.user.subscriptionStatus === 'premium' ? 'Generate Custom' : 'Premium Feature'}
           </ActionButton>
         </div>
         
@@ -103,6 +166,98 @@ function ScriptsPage() {
             <ActionButton variant="primary" size="sm">
               Upgrade Now
             </ActionButton>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Script Generator Modal */}
+      {showCustomGenerator && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-surface rounded-2xl p-6 w-full max-w-md space-y-6">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-bold text-text">Generate Custom Script</h2>
+              <button
+                onClick={() => setShowCustomGenerator(false)}
+                className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center hover:bg-gray-200 transition-colors"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-text mb-2">
+                  Scenario Description
+                </label>
+                <textarea
+                  value={customScenario}
+                  onChange={(e) => setCustomScenario(e.target.value)}
+                  placeholder="Describe the specific situation you need a script for..."
+                  className="w-full h-24 p-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent resize-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-text mb-2">
+                    State
+                  </label>
+                  <select
+                    value={selectedState}
+                    onChange={(e) => setSelectedState(e.target.value)}
+                    className="w-full p-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                  >
+                    {stateOptions.map(state => (
+                      <option key={state} value={state}>{state}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-text mb-2">
+                    Tone
+                  </label>
+                  <select
+                    value={selectedTone}
+                    onChange={(e) => setSelectedTone(e.target.value)}
+                    className="w-full p-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                  >
+                    <option value="respectful">Respectful</option>
+                    <option value="formal">Formal</option>
+                    <option value="conversational">Conversational</option>
+                    <option value="assertive">Assertive</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex space-x-3">
+              <ActionButton
+                variant="secondary"
+                onClick={() => setShowCustomGenerator(false)}
+                className="flex-1"
+              >
+                Cancel
+              </ActionButton>
+              <ActionButton
+                variant="primary"
+                onClick={generateCustomScript}
+                disabled={isGenerating || !customScenario.trim()}
+                className="flex-1"
+              >
+                {isGenerating ? (
+                  <>
+                    <div className="w-4 h-4 mr-2 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                    Generating...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4 mr-2" />
+                    Generate
+                  </>
+                )}
+              </ActionButton>
+            </div>
           </div>
         </div>
       )}
