@@ -65,7 +65,7 @@ function appReducer(state, action) {
       return {
         ...state,
         currentRecording: state.currentRecording 
-          ? { ...state.currentRecording, notes: action.payload }
+          ? { ...state.currentRecording, ...action.payload }
           : null
       }
     case 'SAVE_SCRIPT':
@@ -77,6 +77,22 @@ function appReducer(state, action) {
       return {
         ...state,
         selectedScript: action.payload
+      }
+    case 'UPDATE_USER_SUBSCRIPTION':
+      return {
+        ...state,
+        user: {
+          ...state.user,
+          subscriptionStatus: action.payload
+        }
+      }
+    case 'UPDATE_USER_STATE':
+      return {
+        ...state,
+        user: {
+          ...state.user,
+          currentState: action.payload
+        }
       }
     default:
       return state
